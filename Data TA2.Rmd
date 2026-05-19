@@ -1,0 +1,136 @@
+---
+title: "Tarea Académica 2"
+author: "Gabriela Vargas Donato"
+date: "2026-05-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# 1. Librería
+library(tidyverse)
+
+# 2. Base de datos
+datos_onpe <- read_delim("Resultados_2da_vuelta_Version_PCM .csv", delim = ";", show_col_types = FALSE)
+
+# 3. Agrupar, sumar los votos y calcular la tasa
+datos_provinciales <- datos_onpe %>%
+  
+  # Agrupamos por provincia
+  group_by(PROVINCIA) %>%
+  
+  # Sumamos los votos 
+  summarise(
+    Total_Castillo = sum(as.numeric(VOTOS_P1), na.rm = TRUE),
+    Total_Keiko = sum(as.numeric(VOTOS_P2), na.rm = TRUE)
+  ) %>%
+  
+  # Calculamos la tasa
+  mutate(
+    Tasa_Castillo_Keiko = Total_Castillo / Total_Keiko
+  )
+
+# 4. Ver los primeros resultados en la consola
+head(datos_provinciales)
+
+# 5. Exportar el archivo final
+write.csv(datos_provinciales, "Tasa_Provincial_2daVuelta_2021.csv", row.names = FALSE)
+```
+```{r}
+# 1. Librería
+library(tidyverse)
+
+# 2. Leer las bases de datos
+# Fallecidos usa punto y coma (;)
+datos_covid <- read_delim("fallecidos_covid.csv", delim = ";", show_col_types = FALSE)
+
+# Población usa coma (,) y debemos saltar las primeras 6 filas (skip = 6) de títulos
+library(readxl)
+datos_poblacion <- read_excel("Poblacion Peru 2020 Dpto Prov Dist Final INEI-actualizado.xlsx", 
+                              sheet = "PROVINCIAL", 
+                              skip = 6)
+
+# 3. Procesar COVID: Filtrar año 2020 y contar fallecidos
+fallecidos_2020 <- datos_covid %>%
+  # Convertimos la fecha a texto para buscar las que empiezan con "2020"
+  filter(str_detect(as.character(FECHA_FALLECIMIENTO), "^2020")) %>%
+  # Agrupamos por departamento y provincia para evitar duplicados de nombres
+  group_by(DEPARTAMENTO, PROVINCIA) %>%
+  # n() cuenta cuántas filas (fallecidos) hay en cada grupo
+  summarise(Total_Fallecidos_2020 = n(), .groups = "drop")
+
+# 4. Procesar población: Limpiar columnas y quitar la fila resumen nacional
+poblacion_limpia <- datos_poblacion %>%
+  filter(PROVINCIA != "PERU") %>%
+  select(DEPARTAMENTO, PROVINCIA, Total) %>%
+  rename(Poblacion_2020 = Total)
+
+# 5. Cruzar las bases y calcular la tasa
+tasa_covid_provincial <- fallecidos_2020 %>%
+  # left_join une las dos tablas donde coincidan el departamento y la provincia
+  left_join(poblacion_limpia, by = c("DEPARTAMENTO", "PROVINCIA")) %>%
+  mutate(
+    # Calculamos la tasa por cada 100,000 habitantes (estándar epidemiológico)
+    Tasa_Covid_100k = (Total_Fallecidos_2020 / Poblacion_2020) * 100000
+  )
+
+# 6. Ver el resultado final y exportar
+head(tasa_covid_provincial)
+
+write.csv(tasa_covid_provincial, "Tasa_Covid_2020_Provincial.csv", row.names = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(readxl)
+
+# 1. Procesar combustible 
+combustible <- read_excel("reporte-12.xlsX", skip = 5) %>%
+  # Seleccionamos las columnas por su posición exacta
+  select(
+    Provincia_Cruda = 3,
+    Elec_Cocina = 5,
+    Gas_GLP = 8,
+    Gas_Natural = 11,
+    Carbon = 14,
+    Lena = 17,
+    Bosta_Estiercol = 20,
+    Otros_Residuos = 23,
+    No_Cocinan = 26
+  ) %>%
+  # Limpiamos el nombre de la provincia
+  mutate(Provincia = str_to_upper(str_trim(str_extract(Provincia_Cruda, "(?<=provincia: ).*")))) %>%
+  # Quitamos la columna cruda y filtramos vacíos
+  select(-Provincia_Cruda) %>%
+  filter(!is.na(Provincia))
+
+# 2. Procesar alumbrado
+alumbrado <- read_excel("00TOMO_05.xlsx", sheet = "VIV18", skip = 4) %>%
+  select(Cat = 1, Total = 2, Si_Elec = 3) %>%
+  mutate(Provincia = if_else(str_detect(Cat, "^PROVINCIA "), str_remove(Cat, "PROVINCIA "), NA_character_)) %>%
+  fill(Provincia, .direction = "down") %>%
+  filter(!is.na(Provincia)) %>%
+  filter(str_trim(Cat) == "Viviendas particulares") %>%
+  mutate(Provincia = str_trim(str_to_upper(Provincia))) %>%
+  mutate(Provincia = case_when(
+    str_detect(Provincia, "CALLAO") ~ "CALLAO",
+    str_detect(Provincia, "DE LIMA") ~ "LIMA",
+    TRUE ~ Provincia
+  )) %>%
+  select(Provincia, Total_Viviendas = Total, Alumbrado_Red = Si_Elec) %>%
+  distinct(Provincia, .keep_all = TRUE)
+
+# 3. Cruce
+base_final <- alumbrado %>%
+  left_join(combustible, by = "Provincia") %>%
+  # Rellenar con 0 donde no haya datos
+  mutate(across(where(is.numeric), ~replace_na(., 0)))
+
+# Ver resultado
+view(base_final)
+write_csv(base_final, "Base_Datos_Energia.csv")
+```
+
