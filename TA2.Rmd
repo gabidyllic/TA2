@@ -1,0 +1,107 @@
+---
+title: "Impacto del COVID-19 y la pobreza energética en las elecciones 2021"
+author: "Gabriela Vargas Donato"
+date: "2026-05-14"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(readxl)
+library(stargazer)
+library(ggplot2)
+```
+
+1. Introducción
+
+Este informe analiza los determinantes del voto en la segunda vuelta electoral de 2021 en Perú a nivel provincial. El objetivo es identificar si el impacto de la pandemia del COVID-19 y las condiciones de vulnerabilidad estructural (pobreza energética) influyeron en la ventaja electoral de Pedro Castillo frente a Keiko Fujimori.
+
+2. Preparación de los datos
+
+Para este análisis, hemos fusionado (merge) tres fuentes de datos:
+
+- Elecciones 2021: Tasa de votos Castillo/Keiko por provincia.
+- Salud pública: Tasa de mortalidad COVID-19 por cada 100,000 habitantes en 2020.
+- Censo 2017: Tipos de energía en el hogar como proxy de pobreza.
+
+```{r}
+# Cargamos bases procesadas
+elecciones <- read_csv("Tasa_Provincial_2daVuelta_2021.csv")
+covid <- read_csv("Tasa_Covid_2020_Provincial.csv")
+energia <- read_csv("Base_Datos_Energia.csv") %>%
+  rename(PROVINCIA = Provincia) %>%
+  mutate(PROVINCIA = str_to_upper(str_trim(PROVINCIA)))
+
+# Procesamiento de energía (tasas y cluster)
+energia_pct <- energia %>%
+  mutate(
+    Pct_Gas = Gas_GLP / Total_Viviendas,
+    Pct_Lena = Lena / Total_Viviendas,
+    Pct_Bosta = Bosta_Estiercol / Total_Viviendas,
+    Pct_Elec = Elec_Cocina / Total_Viviendas
+  ) %>%
+  select(PROVINCIA, Pct_Gas, Pct_Lena, Pct_Bosta, Pct_Elec) %>%
+  drop_na()
+
+set.seed(123)
+mis_clusters <- kmeans(scale(energia_pct[,-1]), centers = 2)
+energia_pct$Grupo_Pobreza <- as.factor(mis_clusters$cluster)
+
+# Merge 
+base_analisis <- energia_pct %>%
+  inner_join(elecciones, by = "PROVINCIA") %>%
+  inner_join(covid, by = "PROVINCIA")
+```
+
+3. Análisis Cluster (Proxy de pobreza energética)
+
+Se utilizó la técnica de Clustering (k-means) para agrupar las provincias según el tipo de energía que utilizan para cocinar.
+
+Grupo 1: Provincias con mayor acceso a Gas GLP y Electricidad.
+
+Grupo 2: Provincias con mayor uso de Leña y Bosta (Alta pobreza energética).
+
+4. Análisis Bivariado
+
+Exploramos la relación entre la mortalidad por COVID-19 y la preferencia electoral.
+
+```{r}
+ggplot(base_analisis, aes(x = Tasa_Covid_100k, y = Tasa_Castillo_Keiko)) +
+  geom_point(alpha = 0.5, color = "darkblue") +
+  geom_smooth(method = "lm", color = "red") +
+  theme_minimal() +
+  labs(title = "Relación COVID vs Apoyo Electoral",
+       x = "Tasa de Mortalidad COVID-2020 (por 100k hab.)",
+       y = "Tasa Votos (Castillo / Keiko)")
+```
+
+5. Modelo de Regresión Lineal Múltiple
+
+Evaluamos el impacto conjunto de la pandemia y la pobreza energética en el voto.
+
+```{r, results='asis'}
+
+
+modelo_final <- lm(Tasa_Castillo_Keiko ~ Tasa_Covid_100k + Grupo_Pobreza, data = base_analisis)
+
+stargazer(modelo_final, type = "html", 
+          title = "Determinantes del Voto en 2da Vuelta",
+          covariate.labels = c("Tasa Covid 100k", "Pobreza Energética (Grupo 2)"))
+
+```
+
+6. Interpretación de Resultados
+
+- El modelo muestra un impacto significativo y negativo. A mayor tasa de mortalidad por COVID-19, la ventaja de Castillo sobre Keiko disminuyó. Esto se explica porque el virus golpeó con más fuerza las zonas urbanas y costeras, núcleos tradicionales del voto de Fujimori.
+
+- El factor de energía, al ser controlado por el impacto de la pandemia, no resultó ser un predictor significativo en este modelo específico (p > 0.05).
+
+- El modelo explica el 18.2% de la varianza total en los resultados electorales analizados.
+
+
+
